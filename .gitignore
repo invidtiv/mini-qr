@@ -34,4 +34,7 @@ dev-dist
 # Playwright
 test-results/
 playwright-report/
+
+# Storybook
+storybook-static/
 package-lock.json

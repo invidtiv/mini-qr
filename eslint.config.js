@@ -15,7 +15,8 @@ export default [
       'public/**',
       'pnpm-lock.yaml',
       'scripts/**',
-      '*.json'
+      '*.json',
+      'storybook-static/**'
     ]
   },
   js.configs.recommended,
@@ -59,6 +60,13 @@ export default [
         Document: 'readonly',
         Node: 'readonly',
         XMLSerializer: 'readonly',
+        DOMParser: 'readonly',
+        FontFaceSet: 'readonly',
+        HTMLImageElement: 'readonly',
+        HTMLCanvasElement: 'readonly',
+        SVGSVGElement: 'readonly',
+        TextEncoder: 'readonly',
+        CanvasRenderingContext2D: 'readonly',
         ClipboardItem: 'readonly',
         CSS: 'readonly',
         DataTransferItemList: 'readonly',

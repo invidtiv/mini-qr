@@ -26,9 +26,9 @@ import {
   downloadJpgElement,
   downloadPngElement,
   downloadSvgElement,
+  getInlinedSvgString,
   getJpgElement,
-  getPngElement,
-  getSvgString
+  getPngElement
 } from '@/utils/convertToImage'
 import { parseCSV, validateCSVData, type CSVParsingResult } from '@/utils/csv'
 import { generateBatchExportFilename, processCsvDataForBatch } from '@/utils/csvBatchProcessing'
@@ -62,7 +62,7 @@ import {
   type DotType,
   type ErrorCorrectionLevel,
   type Options as StyledQRCodeProps
-} from 'qr-code-styling'
+} from '@/lib/qr-code'
 import { computed, onMounted, ref, watch } from 'vue'
 import 'vue-i18n'
 import { useI18n } from 'vue-i18n'
@@ -485,15 +485,9 @@ const copyModalIsLoading = ref(false)
 const copyModalImageSrc = ref<string | null>(null)
 
 async function openCopyModal() {
-  const el = document.getElementById('element-to-export')
-  if (!el) return
   copyModalIsLoading.value = true
   try {
-    copyModalImageSrc.value = await getPngElement(
-      el,
-      getExportDimensions(),
-      exportBorderRadius.value
-    )
+    copyModalImageSrc.value = await getPngElement(buildImageExportInput())
     showSafariCopyImageModal.value = true
   } catch (error) {
     console.error('Error preparing image for copy modal:', error)
@@ -509,12 +503,8 @@ function closeCopyModal() {
 // #endregion
 
 function copyQRToClipboard() {
-  const el = document.getElementById('element-to-export')
-  if (!el) {
-    return
-  }
   if (IS_COPY_IMAGE_TO_CLIPBOARD_SUPPORTED) {
-    copyImageToClipboard(el, getExportDimensions(), exportBorderRadius.value)
+    copyImageToClipboard(buildImageExportInput())
   } else if (!isLikelyMobileDevice.value) {
     // for now we only open the copy image modal on safari desktop because
     // this modal will be hidden behind the export image modal on mobile viewport.
@@ -531,31 +521,44 @@ function downloadQRImage(format: 'png' | 'svg' | 'jpg') {
     // Sanitize filename to remove invalid characters
     const sanitizedFilename = (exportFilename.value || 'qr-code').replace(/[^a-zA-Z0-9_-]/g, '_')
 
-    const formatConfig = {
-      png: { fn: downloadPngElement, filename: `${sanitizedFilename}.png` },
-      svg: { fn: downloadSvgElement, filename: `${sanitizedFilename}.svg` },
-      jpg: {
-        fn: downloadJpgElement,
-        filename: `${sanitizedFilename}.jpg`,
-        extraOptions: {
-          bgcolor: styleBackground.value === 'transparent' ? '#ffffff' : styleBackground.value
-        }
-      }
-    }[format]
-
-    const el = document.getElementById('element-to-export')
-    if (!el) {
-      return
+    if (format === 'svg') {
+      downloadSvgElement(buildSvgExportInput(), `${sanitizedFilename}.svg`)
+    } else if (format === 'png') {
+      downloadPngElement(buildImageExportInput(), `${sanitizedFilename}.png`)
+    } else {
+      downloadJpgElement(buildImageExportInput(), `${sanitizedFilename}.jpg`)
     }
-
-    formatConfig.fn(
-      el,
-      formatConfig.filename,
-      { ...getExportDimensions(), ...formatConfig.extraOptions },
-      exportBorderRadius.value
-    )
   } else {
     generateBatchQRCodes(format)
+  }
+}
+
+function buildSvgExportInput() {
+  return {
+    options: qrCodeProps.value,
+    frame: showFrame.value
+      ? {
+          text: frameText.value,
+          position: frameTextPosition.value,
+          style: frameStyle.value
+        }
+      : null,
+    outerBackground: styleBackground.value,
+    borderRadius: exportBorderRadius.value,
+    // SVG natural size: the QR's intrinsic dimensions. Frame chrome is added
+    // by the lib's renderFramed primitive on top of this.
+    size: { width: width.value, height: height.value }
+  }
+}
+
+function buildImageExportInput() {
+  const jpgBackground = styleBackground.value === 'transparent' ? '#ffffff' : styleBackground.value
+  return {
+    ...buildSvgExportInput(),
+    // PNG/JPG final raster output dimensions — include any frame chrome
+    // expansion that the in-app preview shows.
+    targetSize: getExportDimensions(),
+    jpgBackground
   }
 }
 //#endregion
@@ -859,10 +862,6 @@ async function generateBatchQRCodes(format: 'png' | 'svg' | 'jpg') {
   isExportingBatchQRs.value = true
   const zip = new JSZip()
   let numQrCodesCreated = 0
-  const el = document.getElementById('element-to-export')
-  if (!el) {
-    return
-  }
 
   try {
     for (let index = 0; index < dataStringsFromCsv.value.length; index++) {
@@ -878,17 +877,11 @@ async function generateBatchQRCodes(format: 'png' | 'svg' | 'jpg') {
       await sleep(1000)
       let dataUrl: string = ''
       if (format === 'png') {
-        dataUrl = await getPngElement(el, getExportDimensions(), exportBorderRadius.value)
+        dataUrl = await getPngElement(buildImageExportInput())
       } else if (format === 'jpg') {
-        const jpgBgcolor =
-          styleBackground.value === 'transparent' ? '#ffffff' : styleBackground.value
-        dataUrl = await getJpgElement(
-          el,
-          { ...getExportDimensions(), bgcolor: jpgBgcolor },
-          exportBorderRadius.value
-        )
+        dataUrl = await getJpgElement(buildImageExportInput())
       } else {
-        dataUrl = await getSvgString(el, getExportDimensions(), exportBorderRadius.value)
+        dataUrl = await getInlinedSvgString(buildSvgExportInput())
       }
       createZipFile(zip, dataUrl, index, format)
       numQrCodesCreated++
@@ -932,9 +925,7 @@ const updateDataFromModal = (newData: string) => {
 </script>
 
 <template>
-  <div
-    class="flex items-start justify-center gap-4 md:flex-row md:gap-6 lg:gap-12 lg:pb-0"
-  >
+  <div class="flex items-start justify-center gap-4 md:flex-row md:gap-6 lg:gap-12 lg:pb-0">
     <!-- Sticky sidebar on large screens -->
     <div
       v-if="isLarge"
@@ -1316,6 +1307,55 @@ const updateDataFromModal = (newData: string) => {
               </div>
             </div>
           </section>
+
+          <div class="mt-4 flex flex-wrap items-center justify-center gap-2">
+            <a
+              href="https://github.com/lyqht/mini-qr/discussions"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="inline-flex items-center justify-center gap-1.5 rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs text-zinc-700 outline-none hover:bg-zinc-50 focus-visible:ring-1 focus-visible:ring-zinc-700 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+              </svg>
+              {{ t('Feedback') }}
+            </a>
+            <a
+              href="https://github.com/lyqht/mini-qr/issues/new?template=qr-lib-bug.yml"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="inline-flex items-center justify-center gap-1.5 rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs text-zinc-700 outline-none hover:bg-zinc-50 focus-visible:ring-1 focus-visible:ring-zinc-700 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="8" x2="12" y2="12"></line>
+                <line x1="12" y1="16" x2="12.01" y2="16"></line>
+              </svg>
+              {{ t('Report an issue') }}
+            </a>
+          </div>
         </div>
       </div>
     </Teleport>
@@ -1331,14 +1371,7 @@ const updateDataFromModal = (newData: string) => {
         <AccordionItem value="frame-settings">
           <AccordionTrigger
             class="button !px-4 text-2xl text-gray-700 outline-none dark:text-gray-100 md:!px-6 lg:!px-8"
-            ><span class="flex flex-row items-center gap-2"
-              ><span id="frame-settings-title">{{ t('Frame settings') }}</span>
-              <span
-                class="rounded-full bg-white px-2 py-0.5 text-xs font-medium text-zinc-800 dark:bg-zinc-700 dark:text-zinc-200"
-              >
-                {{ t('New!') }}
-              </span></span
-            ></AccordionTrigger
+            ><span id="frame-settings-title">{{ t('Frame settings') }}</span></AccordionTrigger
           >
           <AccordionContent class="px-2 pb-8 pt-4">
             <section class="w-full space-y-4" aria-labelledby="frame-settings-title">

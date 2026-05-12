@@ -30,6 +30,7 @@ import {
   getJpgElement,
   getPngElement
 } from '@/utils/convertToImage'
+import { downloadBlob } from '@/utils/download'
 import { parseCSV, validateCSVData, type CSVParsingResult } from '@/utils/csv'
 import { generateBatchExportFilename, processCsvDataForBatch } from '@/utils/csvBatchProcessing'
 import { getNumericCSSValue } from '@/utils/formatting'
@@ -58,7 +59,9 @@ import {
 } from '@/utils/useQRCodeStorage'
 import { useMediaQuery } from '@vueuse/core'
 import JSZip from 'jszip'
+import TextExportModal from '@/components/TextExportModal.vue'
 import {
+  buildMatrix,
   type CornerDotType,
   type CornerSquareType,
   type DotType,
@@ -612,12 +615,8 @@ function buildCurrentQRConfig(): QRCodeConfig {
 function downloadQRConfig() {
   console.debug('Downloading QR code config')
   const config = buildCurrentQRConfig()
-  const configBlob = new Blob([JSON.stringify(config)], { type: 'application/json' })
-  const configUrl = URL.createObjectURL(configBlob)
-  const downloadLink = document.createElement('a')
-  downloadLink.href = configUrl
-  downloadLink.download = 'qr-code-config.json'
-  downloadLink.click()
+  const blob = new Blob([JSON.stringify(config)], { type: 'application/json' })
+  downloadBlob(blob, 'qr-code-config.json')
 }
 
 function applyQRConfig(config: QRCodeConfig, key?: string) {
@@ -729,6 +728,29 @@ enum ExportMode {
 }
 
 const exportFilename = ref('qr-code')
+const isTextExportModalOpen = ref(false)
+const isMobileExportDrawerOpen = ref(false)
+const asciiMatrix = computed<boolean[][]>(() => {
+  if (!data.value) return []
+  try {
+    return buildMatrix(data.value, errorCorrectionLevel.value).matrix
+  } catch (err) {
+    console.error('Failed to build matrix for ASCII export:', err)
+    return []
+  }
+})
+
+const asciiBatchRows = computed(() =>
+  dataStringsFromCsv.value.map((data, i) => ({
+    data,
+    fileName: fileNamesFromCsv.value[i] ?? `qr-${i}`
+  }))
+)
+
+function openTextExportModal() {
+  isMobileExportDrawerOpen.value = false
+  isTextExportModalOpen.value = true
+}
 const exportMode = ref(ExportMode.Single)
 const dataStringsFromCsv = ref<string[]>([])
 const frameTextsFromCsv = ref<string[]>([])
@@ -929,10 +951,7 @@ async function generateBatchQRCodes(format: 'png' | 'svg' | 'jpg') {
     }
 
     zip.generateAsync({ type: 'blob' }).then((content) => {
-      const link = document.createElement('a')
-      link.href = URL.createObjectURL(content)
-      link.download = `qr-codes.zip`
-      link.click()
+      downloadBlob(content, 'qr-codes.zip')
       isBatchExportSuccess.value = true
     })
   } catch (error) {
@@ -971,7 +990,7 @@ const updateDataFromModal = (newData: string) => {
       class="sticky top-0 flex w-full shrink-0 flex-col items-center justify-center p-4 md:w-fit"
     ></div>
     <!-- Bottom sheet on small screens -->
-    <Drawer v-else>
+    <Drawer v-else v-model:open="isMobileExportDrawerOpen">
       <DrawerTrigger
         id="drawer-preview-container"
         class="fixed inset-x-0 bottom-0 z-10 rounded-t-lg border-t border-solid border-slate-300 bg-white shadow-2xl outline-none focus-visible:ring-1 focus-visible:ring-zinc-700 dark:bg-black dark:focus-visible:ring-zinc-200"
@@ -1341,11 +1360,46 @@ const updateDataFromModal = (newData: string) => {
                     </g>
                   </svg>
                 </button>
+                <button
+                  id="download-qr-text-button"
+                  class="button"
+                  @click="openTextExportModal"
+                  :disabled="isExportButtonDisabled"
+                  :title="
+                    isExportButtonDisabled
+                      ? t('Please enter data to encode first')
+                      : t('Export QR Code as ASCII or Unicode text')
+                  "
+                  :aria-label="t('Export QR Code as ASCII or Unicode text')"
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="24"
+                    height="24"
+                    viewBox="0 0 24 24"
+                  >
+                    <g fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M14 3v4a1 1 0 0 0 1 1h4" />
+                      <path d="M5 12V5a2 2 0 0 1 2-2h7l5 5v4" />
+                      <text
+                        x="1"
+                        y="22"
+                        fill="currentColor"
+                        stroke="none"
+                        font-size="11px"
+                        font-family="monospace"
+                        font-weight="600"
+                      >
+                        TXT
+                      </text>
+                    </g>
+                  </svg>
+                </button>
               </div>
             </div>
           </section>
 
-          <div class="mt-4 flex flex-wrap items-center justify-center gap-2">
+          <div class="mt-4 hidden flex-wrap items-center justify-center gap-2 md:flex">
             <a
               href="https://github.com/lyqht/mini-qr/discussions"
               target="_blank"
@@ -2115,5 +2169,15 @@ const updateDataFromModal = (newData: string) => {
     :is-loading="copyModalIsLoading"
     :image-src="copyModalImageSrc"
     @close="closeCopyModal"
+  />
+  <TextExportModal
+    :open="isTextExportModalOpen"
+    :matrix="asciiMatrix"
+    :has-frame="showFrame"
+    :filename="exportFilename"
+    :is-batch="exportMode === ExportMode.Batch"
+    :batch-rows="asciiBatchRows"
+    :ec-level="errorCorrectionLevel"
+    @close="isTextExportModalOpen = false"
   />
 </template>
